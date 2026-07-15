@@ -364,8 +364,16 @@ const Features: Features = {
       // presentational role conflict resolution to discard `presentation`
       // and correctly default to `img`.
       function* (element) {
-        // If there is an alt attribute and it is totally empty
-        if (element.attribute("alt").some((alt) => alt.value === "")) {
+        // If there is an alt attribute and it is totally empty, and no other
+        // naming mechanism provides a name; a non-empty `title` preserves the
+        // implicit `img` role, while `aria-label` and `aria-labelledby` are
+        // handled by presentational role conflict resolution since their mere
+        // presence, even empty or with dangling references, preserves it.
+        // {@link https://www.w3.org/TR/html-aam-1.0/#el-img-empty-alt}
+        if (
+          element.attribute("alt").some((alt) => alt.value === "") &&
+          element.attribute("title").every((title) => title.value === "")
+        ) {
           yield Role.of("presentation");
         }
 

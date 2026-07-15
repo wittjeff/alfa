@@ -171,6 +171,88 @@ test(`.from() maps \`<img>\` with no source to presentational role`, (t) => {
   }
 });
 
+test(`.from() maps \`<img>\` with empty \`alt\` and no other naming mechanism to
+      presentational role`, (t) => {
+  const empty = {
+    type: "container",
+    node: "/img[1]",
+    role: null,
+    children: [],
+  };
+
+  const images = [<img src="#" alt="" />, <img src="#" alt="" title="" />];
+
+  for (const img of images) {
+    t.deepEqual(Node.from(img, device).toJSON(), empty);
+  }
+});
+
+test(`.from() maps \`<img>\` with empty \`alt\` but a non-empty \`title\` to
+      \`img\` role`, (t) => {
+  const img = <img src="#" alt="" title="Hello" />;
+
+  t.deepEqual(Node.from(img, device).toJSON(), {
+    type: "element",
+    node: "/img[1]",
+    role: "img",
+    name: "Hello",
+    attributes: [],
+    children: [],
+  });
+});
+
+test(`.from() maps \`<img>\` with empty \`alt\` but an \`aria-label\` to \`img\`
+      role, even when the label is empty`, (t) => {
+  for (const [img, name] of [
+    [<img src="#" alt="" aria-label="Hello" />, "Hello"],
+    [<img src="#" alt="" aria-label="" />, null],
+  ] as const) {
+    t.deepEqual(Node.from(img, device).toJSON(), {
+      type: "element",
+      node: "/img[1]",
+      role: "img",
+      name,
+      attributes: [
+        { name: "aria-label", value: img.attribute("aria-label").getUnsafe().value },
+      ],
+      children: [],
+    });
+  }
+});
+
+test(`.from() maps \`<img>\` with empty \`alt\` but an \`aria-labelledby\` to
+      \`img\` role, even when the reference dangles`, (t) => {
+  const labelled = (
+    <div>
+      <img src="#" alt="" aria-labelledby="label" />
+      <span id="label">Hello</span>
+    </div>
+  );
+
+  t.deepEqual(
+    Node.from(labelled, device).children().first().getUnsafe().toJSON(),
+    {
+      type: "element",
+      node: "/div[1]/img[1]",
+      role: "img",
+      name: "Hello",
+      attributes: [{ name: "aria-labelledby", value: "label" }],
+      children: [],
+    },
+  );
+
+  const dangling = <img src="#" alt="" aria-labelledby="nope" />;
+
+  t.deepEqual(Node.from(dangling, device).toJSON(), {
+    type: "element",
+    node: "/img[1]",
+    role: "img",
+    name: null,
+    attributes: [{ name: "aria-labelledby", value: "nope" }],
+    children: [],
+  });
+});
+
 test(`.from() correctly handles slotted list items`, (t) => {
   const target = (
     <div>
