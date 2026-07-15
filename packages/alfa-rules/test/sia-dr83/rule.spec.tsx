@@ -1466,3 +1466,28 @@ test("evaluate() passes text in flex items within wrapping flex container with a
     passed(R83, target4, { 1: Outcomes.WrapsText }),
   ]);
 });
+
+test(`evaluate() is inapplicable to a text node made invisible by a zero-area
+      \`clip-path\``, async (t) => {
+  // https://github.com/Siteimprove/alfa/issues/1548
+  const document = h.document(
+    [
+      <body>
+        <div class="hidden nowrap">Hello world</div>
+      </body>,
+    ],
+    [
+      h.sheet([
+        h.rule.style(".hidden", {
+          clipPath: "polygon(0px 0px, 0px 0px, 0px 0px)",
+          overflow: "hidden",
+          height: "10px",
+          width: "10px",
+        }),
+        h.rule.style(".nowrap", { whiteSpace: "nowrap" }),
+      ]),
+    ],
+  );
+
+  t.deepEqual(await evaluate(R83, { document }), [inapplicable(R83)]);
+});

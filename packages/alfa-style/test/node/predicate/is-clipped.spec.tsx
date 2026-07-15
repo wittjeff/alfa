@@ -309,6 +309,75 @@ test(`isClipped() returns false for a relatively positioned element clipped by
   t.equal(isClipped(element), false);
 });
 
+test(`isClipped() returns true when an element is clipped by a zero-area
+      \`clip-path\` polygon`, (t) => {
+  const text = h.text("Hello world");
+
+  const element = target(
+    { clipPath: "polygon(0px 0px, 0px 0px, 0px 0px)" },
+    text,
+  );
+
+  t.equal(isClipped(element), true);
+  t.equal(isClipped(text), true);
+});
+
+test(`isClipped() returns false when an element is clipped by a non-degenerate
+      \`clip-path\` polygon`, (t) => {
+  for (const element of [
+    target({ clipPath: "polygon(0px 0px, 100px 0px, 100px 100px)" }),
+    target({ clipPath: "polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)" }),
+  ]) {
+    t.equal(isClipped(element), false);
+  }
+});
+
+test(`isClipped() returns true when an element is clipped by a zero radius
+      \`clip-path\` circle or ellipse`, (t) => {
+  for (const element of [
+    target({ clipPath: "circle(0)" }),
+    target({ clipPath: "circle(0%)" }),
+    target({ clipPath: "ellipse(0px 100px)" }),
+    target({ clipPath: "ellipse(100px 0px)" }),
+  ]) {
+    t.equal(isClipped(element), true);
+  }
+});
+
+test(`isClipped() returns false when an element is clipped by a positive radius
+      \`clip-path\` circle or ellipse`, (t) => {
+  for (const element of [
+    target({ clipPath: "circle(50px)" }),
+    target({ clipPath: "circle(closest-side)" }),
+    target({ clipPath: "ellipse(50px 100px)" }),
+  ]) {
+    t.equal(isClipped(element), false);
+  }
+});
+
+test(`isClipped() returns true when an element is clipped by a \`clip-path\`
+      inset covering the full box in some axis`, (t) => {
+  for (const element of [
+    target({ clipPath: "inset(50%)" }),
+    target({ clipPath: "inset(100% 0 0 0)" }),
+    target({ clipPath: "inset(0 60% 0 40%)" }),
+  ]) {
+    t.equal(isClipped(element), true);
+  }
+});
+
+test(`isClipped() returns false when an element is clipped by a \`clip-path\`
+      inset leaving room in both axes, or by a URL reference`, (t) => {
+  for (const element of [
+    target({ clipPath: "inset(40%)" }),
+    target({ clipPath: "inset(10px 20px)" }),
+    target({ clipPath: "url(#mask)" }),
+    target({ clipPath: "none" }),
+  ]) {
+    t.equal(isClipped(element), false);
+  }
+});
+
 /*********************************************************************
  *
  * Checking if an element is moved out of a clipping positioning ancestor
