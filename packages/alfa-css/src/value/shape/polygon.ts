@@ -6,6 +6,7 @@ import type { Option } from "@siteimprove/alfa-option";
 import { Parser } from "@siteimprove/alfa-parser";
 
 import {
+  Comma,
   Function,
   type Parser as CSSParser,
   Token,
@@ -19,7 +20,7 @@ import { Value } from "../value.ts";
 import { BasicShape } from "./basic-shape.ts";
 
 const { left, map, option, pair, right, separated, separatedList } = Parser;
-const { parseComma, parseWhitespace } = Token;
+const { parseWhitespace } = Token;
 
 /**
  * {@link https://drafts.csswg.org/css-shapes/#funcdef-polygon}
@@ -120,7 +121,7 @@ export class Polygon<
 
   public toString(): string {
     const fill = this._fill.reduce((_, fill) => `${fill}, `, "");
-    const vertices = this._vertices.map(([h, v]) => `${h} ${v}`).join(" ");
+    const vertices = this._vertices.map(([h, v]) => `${h} ${v}`).join(", ");
 
     return `polygon(${fill}${vertices})`;
   }
@@ -170,10 +171,10 @@ export namespace Polygon {
     Function.parse(
       "polygon",
       pair(
-        option(left(Keyword.parse("nonzero", "evenodd"), parseComma)),
+        option(left(Keyword.parse("nonzero", "evenodd"), Comma.parse)),
         right(
           option(parseWhitespace),
-          separatedList(parseVertex, parseWhitespace),
+          separatedList(parseVertex, Comma.parse),
         ),
       ),
     ),
