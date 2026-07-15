@@ -144,7 +144,10 @@ export namespace Native {
           "contentDocument" in element && element.contentDocument !== null
             ? await toDocument(element.contentDocument)
             : null,
-        box: toRectangle(element.getBoundingClientRect()),
+        box: toRectangle(
+          element.getBoundingClientRect(),
+          element.ownerDocument.defaultView,
+        ),
       };
 
       if (injectDataAlfaId) {
@@ -186,7 +189,10 @@ export namespace Native {
           // Not all execution environments have layout, e.g. JSDOM:
           // https://github.com/jsdom/jsdom/pull/2719#issuecomment-590145974
           range.getBoundingClientRect !== undefined
-            ? toRectangle(range.getBoundingClientRect())
+            ? toRectangle(
+                range.getBoundingClientRect(),
+                text.ownerDocument.defaultView,
+              )
             : null,
       };
     }
@@ -556,11 +562,24 @@ export namespace Native {
       return block.cssText;
     }
 
-    function toRectangle(domRect: globalThis.DOMRect): Rectangle.JSON {
+    /**
+     * @remarks
+     * `getBoundingClientRect` returns positions relative to the current scroll
+     * position of the node's browsing context. We instead store positions in
+     * "layout viewport" coordinates, i.e. relative to the top-left corner of
+     * the document, so that snapshots of a scrolled page are identical to
+     * snapshots taken at the top of the page.
+     *
+     * {@link https://github.com/Siteimprove/alfa/issues/1999}
+     */
+    function toRectangle(
+      domRect: globalThis.DOMRect,
+      window: globalThis.Window | null,
+    ): Rectangle.JSON {
       return {
         type: "rectangle",
-        x: domRect.x,
-        y: domRect.y,
+        x: domRect.x + (window?.scrollX ?? 0),
+        y: domRect.y + (window?.scrollY ?? 0),
         width: domRect.width,
         height: domRect.height,
       };

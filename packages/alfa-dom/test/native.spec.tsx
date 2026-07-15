@@ -1,7 +1,13 @@
 import { test } from "@siteimprove/alfa-test";
 import { JSDOM } from "jsdom";
 
-import { type Document, h, Node, Query } from "@siteimprove/alfa-dom";
+import {
+  type Document,
+  type Element,
+  h,
+  Node,
+  Query,
+} from "@siteimprove/alfa-dom";
 import { Native } from "@siteimprove/alfa-dom/native";
 
 /**
@@ -264,4 +270,29 @@ test("Native.fromNode() handles constructed stylesheets passed to document.adopt
         .toJSON(),
     ],
   );
+});
+
+test("Native.fromNode() records boxes relative to the document, not the scroll position", async (t) => {
+  const jsdom = new JSDOM("<div id='hello'>Hello</div>");
+
+  // JSDOM has no layout, so all rectangles are 0×0 at (0, 0); faking the
+  // window's scroll offsets nonetheless checks that they are added to the
+  // positions reported by getBoundingClientRect.
+  // https://github.com/Siteimprove/alfa/issues/1999
+  Object.defineProperty(jsdom.window, "scrollX", { value: 250 });
+  Object.defineProperty(jsdom.window, "scrollY", { value: 1000 });
+
+  const actual = await Native.fromNode(jsdom.window.document);
+
+  const html = actual.children?.[0] as Element.JSON;
+  const body = html.children?.[1] as Element.JSON;
+  const div = body.children?.[0] as Element.JSON;
+
+  t.deepEqual(div.box, {
+    type: "rectangle",
+    x: 250,
+    y: 1000,
+    width: 0,
+    height: 0,
+  });
 });
