@@ -1,5 +1,11 @@
 import { Cache } from "@siteimprove/alfa-cache";
-import { Length, LengthPercentage, Numeric } from "@siteimprove/alfa-css";
+import type { Radius, Rectangle as CSSRectangle, Shape } from "@siteimprove/alfa-css";
+import {
+  Length,
+  LengthPercentage,
+  Numeric,
+  Percentage,
+} from "@siteimprove/alfa-css";
 import type { Device } from "@siteimprove/alfa-device";
 import { Element, Node } from "@siteimprove/alfa-dom";
 import { Predicate } from "@siteimprove/alfa-predicate";
@@ -212,6 +218,17 @@ function isClippedByIndent(
 
 /**
  * Checks if an element is fully masked by a clipping shape.
+ *
+ * @remarks
+ * For `clip-path`, we do not attempt a generic area computation of arbitrary
+ * shapes. Instead, we detect basic shapes that are guaranteed to enclose an
+ * empty area, since these are commonly used to visually hide content:
+ * * a `polygon()` whose vertices are all identical, e.g. `polygon(0 0, 0 0, 0 0)`;
+ * * a `circle()` or `ellipse()` with a zero radius;
+ * * an `inset()` whose insets sum to 100% or more of the box in some axis;
+ * * a `rect()` with coinciding horizontal or vertical edges.
+ * Anything else (URL references, calculated values, non-degenerate shapes) is
+ * assumed to show the content. This can only create false negatives.
  */
 function isClippedByMasking(
   device: Device,
@@ -221,15 +238,87 @@ function isClippedByMasking(
     const style = Style.from(element, device, context);
 
     const { value: clip } = style.computed("clip");
+    const { value: clipPath } = style.computed("clip-path");
 
     return (
-      clip.type === "shape" &&
-      ((clip.shape.top.type === "length" &&
-        clip.shape.top.equals(clip.shape.bottom)) ||
-        (clip.shape.left.type === "length" &&
-          clip.shape.left.equals(clip.shape.right)))
+      (clip.type === "shape" && isEmptyRectangle(clip.shape)) ||
+      (clipPath.type === "shape" && isEmptyShape(clipPath.shape))
     );
   };
+}
+
+function isEmptyShape(shape: Shape.Basic): boolean {
+  switch (shape.kind) {
+    case "circle":
+      return isDefinitelyZero(shape.radius);
+
+    case "ellipse":
+      return isDefinitelyZero(shape.rx) || isDefinitelyZero(shape.ry);
+
+    case "inset":
+      return (
+        coversAxis(shape.top, shape.bottom) ||
+        coversAxis(shape.left, shape.right)
+      );
+
+    case "polygon": {
+      const [first, ...rest] = shape.vertices;
+
+      return (
+        shape.vertices.length < 3 ||
+        rest.every(
+          ([x, y]) => x.equals(first[0]) && y.equals(first[1]),
+        )
+      );
+    }
+
+    case "rectangle":
+      return isEmptyRectangle(shape);
+  }
+}
+
+function isEmptyRectangle(shape: CSSRectangle): boolean {
+  return (
+    (shape.top.type === "length" && shape.top.equals(shape.bottom)) ||
+    (shape.left.type === "length" && shape.left.equals(shape.right))
+  );
+}
+
+/**
+ * Checks if a shape radius is definitely zero; keywords (`closest-side`, …)
+ * and calculated values are conservatively assumed to be non-zero.
+ */
+function isDefinitelyZero(radius: Radius): boolean {
+  const { value } = radius;
+
+  return (
+    Numeric.isNumeric(value) && !value.hasCalculation() && Numeric.isZero(value)
+  );
+}
+
+/**
+ * Checks if two opposite insets consume the full axis, leaving an empty area.
+ * Only percentages can be compared to the (unknown) box size, so the
+ * percentage parts must add up to 100% or more; non-negative lengths can only
+ * shrink the area further and are ignored, while anything else (negative or
+ * calculated offsets) is conservatively assumed to leave room.
+ */
+function coversAxis(start: LengthPercentage, end: LengthPercentage): boolean {
+  let covered = 0;
+
+  for (const offset of [start, end]) {
+    if (offset.hasCalculation()) {
+      return false;
+    }
+
+    if (Percentage.isPercentage(offset)) {
+      covered += offset.value;
+    } else if (!(Length.isLength(offset) && offset.value >= 0)) {
+      return false;
+    }
+  }
+
+  return covered >= 1;
 }
 
 /**
