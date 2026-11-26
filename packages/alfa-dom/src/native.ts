@@ -225,7 +225,7 @@ export namespace Native {
       shadow: globalThis.ShadowRoot,
     ): Promise<Shadow.JSON> {
       if (enforceAnonymousCrossOrigin) {
-        await ensureCrossOrigin(document);
+        await ensureCrossOrigin(shadow);
       }
 
       return {
