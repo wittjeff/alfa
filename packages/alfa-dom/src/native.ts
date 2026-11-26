@@ -638,17 +638,41 @@ export namespace Native {
         if (shouldAwait(link)) {
           /**
            * Construct a promise that resolves once the `<link>` element either
-           * loads successfully or fails to load. If the `<link>` element fails
-           * to load, a request error will be logged to the console which
-           * should be enough indication that something didn't go quite as
-           * expected. Either way, we will deliver audit results even in the
-           * event of a missing resource.
+           * loads successfully or fails to load.
            */
-          await new Promise<void>((resolve) =>
-            ["load", "error"].forEach((event) =>
-              clone.addEventListener(event, () => resolve()),
-            ),
-          );
+          const loaded = await new Promise<boolean>((resolve) => {
+            clone.addEventListener("load", () => resolve(true), { once: true });
+            clone.addEventListener("error", () => resolve(false), {
+              once: true,
+            });
+          });
+
+          /**
+           * A resource whose server does not allow anonymous cross-origin
+           * requests fails to load once the `crossorigin` attribute is set,
+           * while it was loaded and applied without it. Leaving the clone in
+           * place would remove these styles from the page, changing its layout
+           * and rendering, for no gain. We therefore put the original `<link>`
+           * element back, and wait for it. Its rules cannot be read, as before,
+           * but the page is as it was.
+           */
+          if (!loaded && clone.parentNode !== null) {
+            clone.parentNode.replaceChild(link, clone);
+
+            await new Promise<void>((resolve) =>
+              ["load", "error"].forEach((event) =>
+                link.addEventListener(event, () => resolve(), { once: true }),
+              ),
+            );
+
+            logs.push(
+              JSON.stringify({
+                level: "warn",
+                type: "crossorigin",
+                message: `Failed to load ${link.href} with crossorigin="anonymous", the original <link> element was restored`,
+              }),
+            );
+          }
         }
       }
 

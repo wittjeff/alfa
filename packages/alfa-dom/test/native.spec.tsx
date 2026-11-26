@@ -180,6 +180,97 @@ test("Native.fromNode() adds crossorigin to <link> without one, when asked", asy
   );
 });
 
+test("Native.fromNode() restores a stylesheet <link> that fails to load with crossorigin", async (t) => {
+  const jsdom = new JSDOM(
+    "<head><link rel='stylesheet' href='https://example.com/foo.css' /></head><body>Hello</body>",
+  );
+  globalThis.document = jsdom.window.document;
+
+  const original = document.querySelector("link")!;
+
+  // The <link> is replaced synchronously, and its loading is then awaited.
+  const pending = Native.fromNode(document, {
+    enforceAnonymousCrossOrigin: true,
+  });
+
+  const clone = document.querySelector("link")!;
+
+  t(clone !== original);
+  t.equal(clone.getAttribute("crossorigin"), "anonymous");
+
+  // The server does not allow anonymous cross-origin requests.
+  clone.dispatchEvent(new jsdom.window.Event("error"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  t.equal(document.querySelector("link"), original);
+
+  // The original <link> loads again, as it did in the first place.
+  original.dispatchEvent(new jsdom.window.Event("load"));
+
+  const json = await pending;
+
+  t.deepEqual(
+    Node.from(json).toJSON(),
+    h
+      .document([
+        <html>
+          <head>
+            <link rel="stylesheet" href="https://example.com/foo.css" />
+          </head>
+          <body>Hello</body>
+        </html>,
+      ])
+      .toJSON(),
+  );
+
+  t.deepEqual(
+    json.logs.map((log) => JSON.parse(log)),
+    [
+      {
+        level: "warn",
+        type: "crossorigin",
+        message:
+          'Failed to load https://example.com/foo.css with crossorigin="anonymous", the original <link> element was restored',
+      },
+    ],
+  );
+});
+
+test("Native.fromNode() keeps a stylesheet <link> that loads with crossorigin", async (t) => {
+  const jsdom = new JSDOM(
+    "<head><link rel='stylesheet' href='https://example.com/foo.css' /></head><body>Hello</body>",
+  );
+  globalThis.document = jsdom.window.document;
+
+  const pending = Native.fromNode(document, {
+    enforceAnonymousCrossOrigin: true,
+  });
+
+  document.querySelector("link")!.dispatchEvent(new jsdom.window.Event("load"));
+
+  const json = await pending;
+
+  t.deepEqual(
+    Node.from(json).toJSON(),
+    h
+      .document([
+        <html>
+          <head>
+            <link
+              rel="stylesheet"
+              href="https://example.com/foo.css"
+              crossorigin="anonymous"
+            />
+          </head>
+          <body>Hello</body>
+        </html>,
+      ])
+      .toJSON(),
+  );
+
+  t.deepEqual(json.logs, []);
+});
+
 test("Native.fromNode)() adds data-alfa-id if asked to", async (t) => {
   const html = "<div id='hello' class='foo'>Hello</div>";
   const jsdom = new JSDOM(html);
