@@ -315,15 +315,27 @@ export namespace Native {
      * empty, and the page be audited without these styles.
      *
      * {@link https://github.com/Siteimprove/alfa/issues/2188}
+     *
+     * Rules nested in a style rule are flattened: they are serialised after
+     * their parent rule, in order, with the nesting selector resolved. This is
+     * where the CSS Nesting specification places them in the cascade.
+     *
+     * {@link https://drafts.csswg.org/css-nesting-1/#nesting}
+     *
+     * @param parent - The selector of the style rule in which the rules are
+     * nested, if any.
      */
-    function toRules(rules: globalThis.CSSRuleList): Array<Rule.JSON> {
+    function toRules(
+      rules: globalThis.CSSRuleList,
+      parent: string | null = null,
+    ): Array<Rule.JSON> {
       const result: Array<Rule.JSON> = [];
 
       for (let i = 0; i < rules.length; i++) {
         let json: Rule.JSON | null;
 
         try {
-          json = toRule(rules[i]);
+          json = toRule(rules[i], parent);
         } catch (e) {
           logs.push(
             JSON.stringify({
@@ -339,6 +351,15 @@ export namespace Native {
 
         if (json !== null) {
           result.push(json);
+
+          // Not all execution environments support nesting, in which case
+          // style rules have no child rules.
+          const nested = (rules[i] as Partial<globalThis.CSSStyleRule>)
+            .cssRules;
+
+          if (json.type === "style" && nested !== undefined) {
+            result.push(...toRules(nested, (json as Rule.Style.JSON).selector));
+          }
         }
       }
 
@@ -348,7 +369,10 @@ export namespace Native {
     /**
      * Serialises a rule, or returns `null` if its type is not supported.
      */
-    function toRule(rule: globalThis.CSSRule): Rule.JSON | null {
+    function toRule(
+      rule: globalThis.CSSRule,
+      parent: string | null,
+    ): Rule.JSON | null {
       // In the best case, rule.constructor.name works and everything is fine.
       switch (rule.constructor.name) {
         case "CSSFontFaceRule":
@@ -364,25 +388,35 @@ export namespace Native {
           return toKeyframesRule(rule as globalThis.CSSKeyframesRule);
 
         case "CSSLayerBlockRule":
-          return toLayerBlockRule(rule as globalThis.CSSLayerBlockRule);
+          return toLayerBlockRule(rule as globalThis.CSSLayerBlockRule, parent);
 
         case "CSSLayerStatementRule":
           return toLayerStatementRule(rule as globalThis.CSSLayerStatementRule);
 
         case "CSSMediaRule":
-          return toMediaRule(rule as globalThis.CSSMediaRule);
+          return toMediaRule(rule as globalThis.CSSMediaRule, parent);
 
         case "CSSNamespaceRule":
           return toNamespaceRule(rule as globalThis.CSSNamespaceRule);
+
+        case "CSSNestedDeclarations":
+          // Nested declarations only make sense inside a style rule.
+          if (parent !== null) {
+            return toNestedDeclarations(
+              rule as globalThis.CSSNestedDeclarations,
+              parent,
+            );
+          }
+          break;
 
         case "CSSPageRule":
           return toPageRule(rule as globalThis.CSSPageRule);
 
         case "CSSStyleRule":
-          return toStyleRule(rule as globalThis.CSSStyleRule);
+          return toStyleRule(rule as globalThis.CSSStyleRule, parent);
 
         case "CSSSupportsRule":
-          return toSupportsRule(rule as globalThis.CSSSupportsRule);
+          return toSupportsRule(rule as globalThis.CSSSupportsRule, parent);
       }
 
       // In some case (June 2024: in Firefox), rule.constructor.name returns
@@ -403,19 +437,27 @@ export namespace Native {
         case "[object CSSKeyframesRule]":
           return toKeyframesRule(rule as globalThis.CSSKeyframesRule);
         case "[object CSSLayerBlockRule]":
-          return toLayerBlockRule(rule as globalThis.CSSLayerBlockRule);
+          return toLayerBlockRule(rule as globalThis.CSSLayerBlockRule, parent);
         case "[object CSSLayerStatementRule]":
           return toLayerStatementRule(rule as globalThis.CSSLayerStatementRule);
         case "[object CSSMediaRule]":
-          return toMediaRule(rule as globalThis.CSSMediaRule);
+          return toMediaRule(rule as globalThis.CSSMediaRule, parent);
         case "[object CSSNamespaceRule]":
           return toNamespaceRule(rule as globalThis.CSSNamespaceRule);
+        case "[object CSSNestedDeclarations]":
+          if (parent !== null) {
+            return toNestedDeclarations(
+              rule as globalThis.CSSNestedDeclarations,
+              parent,
+            );
+          }
+          break;
         case "[object CSSPageRule]":
           return toPageRule(rule as globalThis.CSSPageRule);
         case "[object CSSStyleRule]":
-          return toStyleRule(rule as globalThis.CSSStyleRule);
+          return toStyleRule(rule as globalThis.CSSStyleRule, parent);
         case "[object CSSSupportsRule]":
-          return toSupportsRule(rule as globalThis.CSSSupportsRule);
+          return toSupportsRule(rule as globalThis.CSSSupportsRule, parent);
       }
 
       // If everything else failed, we default to the deprecated `type`.
@@ -436,15 +478,15 @@ export namespace Native {
         // case "CSSLayerStatementRule":
         //   return toLayerStatementRule(rule);
         case CSSRule.MEDIA_RULE:
-          return toMediaRule(rule as globalThis.CSSMediaRule);
+          return toMediaRule(rule as globalThis.CSSMediaRule, parent);
         case CSSRule.NAMESPACE_RULE:
           return toNamespaceRule(rule as globalThis.CSSNamespaceRule);
         case CSSRule.PAGE_RULE:
           return toPageRule(rule as globalThis.CSSPageRule);
         case CSSRule.STYLE_RULE:
-          return toStyleRule(rule as globalThis.CSSStyleRule);
+          return toStyleRule(rule as globalThis.CSSStyleRule, parent);
         case CSSRule.SUPPORTS_RULE:
-          return toSupportsRule(rule as globalThis.CSSSupportsRule);
+          return toSupportsRule(rule as globalThis.CSSSupportsRule, parent);
       }
 
       // This is a rule of a type that Alfa does not support (e.g., @container,
@@ -534,11 +576,12 @@ export namespace Native {
 
     function toLayerBlockRule(
       rule: globalThis.CSSLayerBlockRule,
+      parent: string | null,
     ): Rule.Layer.Block.JSON {
       return {
         type: "layer-block",
         layer: rule.name,
-        rules: toRules(rule.cssRules),
+        rules: toRules(rule.cssRules, parent),
       };
     }
 
@@ -551,11 +594,14 @@ export namespace Native {
       };
     }
 
-    function toMediaRule(rule: globalThis.CSSMediaRule): Rule.Media.JSON {
+    function toMediaRule(
+      rule: globalThis.CSSMediaRule,
+      parent: string | null,
+    ): Rule.Media.JSON {
       let rules: Array<Rule.JSON>;
 
       try {
-        rules = toRules(rule.cssRules);
+        rules = toRules(rule.cssRules, parent);
       } catch {
         rules = [];
       }
@@ -585,21 +631,144 @@ export namespace Native {
       };
     }
 
-    function toStyleRule(styleRule: globalThis.CSSStyleRule): Rule.Style.JSON {
+    function toStyleRule(
+      styleRule: globalThis.CSSStyleRule,
+      parent: string | null,
+    ): Rule.Style.JSON {
       return {
         type: "style",
-        selector: styleRule.selectorText,
+        selector:
+          parent === null
+            ? styleRule.selectorText
+            : resolveNesting(styleRule.selectorText, parent),
         style: toBlock(styleRule.style),
       };
     }
 
+    /**
+     * Serialises the declarations that follow a nested rule in a style rule.
+     *
+     * @remarks
+     * These match the same elements as the style rule they are in, with the
+     * same specificity, but are placed after the nested rules that precede
+     * them in the cascade.
+     *
+     * {@link https://drafts.csswg.org/css-nesting-1/#nested-declarations-rule}
+     */
+    function toNestedDeclarations(
+      rule: globalThis.CSSNestedDeclarations,
+      parent: string,
+    ): Rule.Style.JSON {
+      return {
+        type: "style",
+        selector: parent,
+        style: toBlock(rule.style),
+      };
+    }
+
+    /**
+     * Resolves the selector of a nested style rule against the selector of its
+     * parent rule, giving a selector that needs no nesting.
+     *
+     * @remarks
+     * The nesting selector `&` represents the elements matched by the parent
+     * rule, with the specificity of the most specific selector in the parent's
+     * selector list. This is exactly `:is(<parent selector>)`, by which it is
+     * replaced. A complex selector without nesting selector is relative to the
+     * parent, e.g. `.foo` is `& .foo` and `> .foo` is `& > .foo`.
+     *
+     * {@link https://drafts.csswg.org/css-nesting-1/#nest-selector}
+     *
+     * @privateRemarks
+     * This works on the text of the selector, without parsing it, because the
+     * present function cannot depend on Alfa's selector parser. Browsers
+     * serialise attribute values as strings, so `&` is only looked for outside
+     * of strings and of attribute selectors.
+     */
+    function resolveNesting(selector: string, parent: string): string {
+      const replacement = `:is(${parent})`;
+      const resolved: Array<string> = [];
+
+      // The complex selector currently being read.
+      let complex = "";
+      let hasNestingSelector = false;
+      let parentheses = 0;
+      let brackets = 0;
+      let i = 0;
+
+      function flush(): void {
+        const trimmed = complex.trim();
+
+        resolved.push(
+          hasNestingSelector ? trimmed : `${replacement} ${trimmed}`,
+        );
+
+        complex = "";
+        hasNestingSelector = false;
+      }
+
+      while (i < selector.length) {
+        const char = selector[i];
+
+        if (char === "\\") {
+          // An escaped character, which is copied as is.
+          complex += selector.slice(i, i + 2);
+          i += 2;
+        } else if (char === '"' || char === "'") {
+          // A string, which is copied as is.
+          let end = i + 1;
+
+          while (end < selector.length && selector[end] !== char) {
+            end += selector[end] === "\\" ? 2 : 1;
+          }
+
+          complex += selector.slice(i, end + 1);
+          i = end + 1;
+        } else if (char === "&" && brackets === 0) {
+          hasNestingSelector = true;
+
+          // The nesting selector may be written before a type selector
+          // (`&div`), which must be first in a compound selector.
+          const type =
+            /^(?:[a-zA-Z_*\u0080-\uFFFF]|\\.)(?:[\w\u0080-\uFFFF-]|\\.)*/.exec(
+              selector.slice(i + 1),
+            );
+
+          complex += (type?.[0] ?? "") + replacement;
+          i += 1 + (type?.[0].length ?? 0);
+        } else if (char === "," && parentheses === 0 && brackets === 0) {
+          // The end of a complex selector of the list.
+          flush();
+          i++;
+        } else {
+          if (char === "(") {
+            parentheses++;
+          } else if (char === ")") {
+            parentheses--;
+          } else if (char === "[") {
+            brackets++;
+          } else if (char === "]") {
+            brackets--;
+          }
+
+          complex += char;
+          i++;
+        }
+      }
+
+      flush();
+
+      return resolved.join(", ");
+    }
+
     function toSupportsRule(
       rule: globalThis.CSSSupportsRule,
+      parent: string | null,
     ): Rule.Supports.JSON {
       let rules: Array<Rule.JSON>;
 
       try {
-        rules = toRules(rule.cssRules);
+        rules = toRules(rule.cssRules, parent);
       } catch {
         rules = [];
       }

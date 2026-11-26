@@ -368,3 +368,106 @@ test("Native.fromNode() does not log anything when all rules are supported", asy
 
   t.deepEqual(logs, []);
 });
+
+test("Native.fromNode() flattens nested style rules", async (t) => {
+  const { sheets, logs } = await makeSheets(`
+    .parent {
+      color: red;
+      .child { color: blue }
+      & > .direct { color: green }
+      .context & { color: yellow }
+      &.compound { color: purple }
+      background-color: white;
+    }
+    .after { color: red }
+  `);
+
+  t.deepEqual(sheets, [
+    h
+      .sheet([
+        h.rule.style(".parent", { color: "red" }),
+        h.rule.style(":is(.parent) .child", { color: "blue" }),
+        h.rule.style(":is(.parent) > .direct", { color: "green" }),
+        h.rule.style(".context :is(.parent)", { color: "yellow" }),
+        h.rule.style(":is(.parent).compound", { color: "purple" }),
+        // Declarations after a nested rule come after it in the cascade.
+        h.rule.style(".parent", { "background-color": "white" }),
+        h.rule.style(".after", { color: "red" }),
+      ])
+      .toJSON(),
+  ]);
+
+  t.deepEqual(logs, []);
+});
+
+test("Native.fromNode() resolves the nesting selector against the whole selector list of the parent", async (t) => {
+  const { sheets } = await makeSheets(`
+    h1, #title {
+      & span, em { color: blue }
+      .deep { .deeper { color: green } }
+    }
+  `);
+
+  t.deepEqual(sheets, [
+    h
+      .sheet([
+        h.rule.style("h1, #title", {}),
+        h.rule.style(":is(h1, #title) span, :is(h1, #title) em", {
+          color: "blue",
+        }),
+        h.rule.style(":is(h1, #title) .deep", {}),
+        h.rule.style(":is(:is(h1, #title) .deep) .deeper", {
+          color: "green",
+        }),
+      ])
+      .toJSON(),
+  ]);
+});
+
+test("Native.fromNode() only replaces the nesting selector outside of strings and attribute selectors", async (t) => {
+  const { sheets } = await makeSheets(`
+    .parent {
+      [title="a & b, c"] { color: blue }
+      :not(&) > .other { color: green }
+    }
+  `);
+
+  t.deepEqual(sheets, [
+    h
+      .sheet([
+        h.rule.style(".parent", {}),
+        h.rule.style(':is(.parent) [title="a & b, c"]', { color: "blue" }),
+        h.rule.style(":not(:is(.parent)) > .other", { color: "green" }),
+      ])
+      .toJSON(),
+  ]);
+});
+
+test("Native.fromNode() flattens style rules and declarations nested in grouping rules", async (t) => {
+  const { sheets } = await makeSheets(`
+    .parent {
+      @media screen {
+        color: red;
+        .child { color: blue }
+      }
+      @supports (display: grid) {
+        & .grid { color: green }
+      }
+    }
+  `);
+
+  t.deepEqual(sheets, [
+    h
+      .sheet([
+        h.rule.style(".parent", {}),
+        h.rule.media("screen", [
+          h.rule.style(".parent", { color: "red" }),
+          h.rule.style(":is(.parent) .child", { color: "blue" }),
+        ]),
+        h.rule.supports("(display: grid)", [
+          h.rule.style(":is(.parent) .grid", { color: "green" }),
+        ]),
+      ])
+      .toJSON(),
+  ]);
+});
