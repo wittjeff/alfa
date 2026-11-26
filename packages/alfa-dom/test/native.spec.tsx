@@ -1,7 +1,13 @@
 import { test } from "@siteimprove/alfa-test";
 import { JSDOM } from "jsdom";
 
-import { type Document, h, Node, Query } from "@siteimprove/alfa-dom";
+import {
+  type Document,
+  h,
+  Node,
+  Query,
+  type Sheet,
+} from "@siteimprove/alfa-dom";
 import { Native } from "@siteimprove/alfa-dom/native";
 
 /**
@@ -264,4 +270,101 @@ test("Native.fromNode() handles constructed stylesheets passed to document.adopt
         .toJSON(),
     ],
   );
+});
+
+async function makeSheets(css: string): Promise<{
+  sheets: Array<Sheet.JSON>;
+  logs: Array<{ [key: string]: unknown }>;
+}> {
+  const jsdom = new JSDOM(`<head><style>${css}</style></head>`);
+  globalThis.document = jsdom.window.document;
+  // Native.fromNode falls back on the constants of the CSSRule interface for
+  // rules it does not recognise by name. Browsers always provide it.
+  globalThis.CSSRule = jsdom.window.CSSRule;
+
+  const json = await Native.fromNode(document);
+
+  return {
+    sheets: [...(Node.from(json) as Document).style].map((sheet) =>
+      sheet.toJSON(),
+    ),
+    logs: json.logs.map((log) => JSON.parse(log)),
+  };
+}
+
+test("Native.fromNode() skips rules of unsupported types and keeps their siblings", async (t) => {
+  const { sheets, logs } = await makeSheets(`
+    .before { color: red }
+    @container (width > 10px) { .inside { color: blue } }
+    @counter-style thumbs { system: cyclic; symbols: "x"; suffix: " " }
+    @container (width > 20px) { .inside { color: green } }
+    .after { color: red }
+  `);
+
+  t.deepEqual(sheets, [
+    h
+      .sheet([
+        h.rule.style(".before", { color: "red" }),
+        h.rule.style(".after", { color: "red" }),
+      ])
+      .toJSON(),
+  ]);
+
+  // Skipped rules are logged once per type.
+  t.deepEqual(logs, [
+    {
+      level: "warn",
+      type: "rule",
+      message: "Skipped 2 CSS rules of unsupported type CSSContainerRule",
+      ruleType: "CSSContainerRule",
+      count: 2,
+    },
+    {
+      level: "warn",
+      type: "rule",
+      message: "Skipped 1 CSS rule of unsupported type CSSCounterStyleRule",
+      ruleType: "CSSCounterStyleRule",
+      count: 1,
+    },
+  ]);
+});
+
+test("Native.fromNode() skips rules of unsupported types inside grouping rules", async (t) => {
+  const { sheets } = await makeSheets(`
+    @media screen {
+      .media { color: red }
+      @container (width > 10px) { .inside { color: blue } }
+    }
+    @supports (display: grid) {
+      @container (width > 10px) { .inside { color: blue } }
+      .supports { color: red }
+    }
+    @layer base {
+      .layer { color: red }
+      @container (width > 10px) { .inside { color: blue } }
+    }
+    .after { color: red }
+  `);
+
+  t.deepEqual(sheets, [
+    h
+      .sheet([
+        h.rule.media("screen", [h.rule.style(".media", { color: "red" })]),
+        h.rule.supports("(display: grid)", [
+          h.rule.style(".supports", { color: "red" }),
+        ]),
+        h.rule.layerBlock([h.rule.style(".layer", { color: "red" })], "base"),
+        h.rule.style(".after", { color: "red" }),
+      ])
+      .toJSON(),
+  ]);
+});
+
+test("Native.fromNode() does not log anything when all rules are supported", async (t) => {
+  const { logs } = await makeSheets(`
+    .foo { color: red }
+    @media screen { .bar { color: red } }
+  `);
+
+  t.deepEqual(logs, []);
 });

@@ -95,7 +95,26 @@ export namespace Native {
     } = options ?? {};
     const range = globalThis.document.createRange(); // Used by toText - the same instance can be reused for each text node.
 
-    return { ...(await toNode(node)), logs };
+    // The number of CSS rules that were skipped, per rule type. These are
+    // logged once per type rather than once per rule, as some pages contain
+    // thousands of them.
+    const skippedRules = new Map<string, number>();
+
+    const json = await toNode(node);
+
+    for (const [ruleType, count] of skippedRules) {
+      logs.push(
+        JSON.stringify({
+          level: "warn",
+          type: "rule",
+          message: `Skipped ${count} CSS rule${count === 1 ? "" : "s"} of unsupported type ${ruleType}`,
+          ruleType,
+          count,
+        }),
+      );
+    }
+
+    return { ...json, logs };
 
     async function toNode(node: globalThis.Node): Promise<Node.JSON> {
       switch (node.nodeType) {
@@ -258,8 +277,19 @@ export namespace Native {
       let rules: Array<Rule.JSON>;
 
       try {
-        rules = map(sheet.cssRules, toRule);
-      } catch {
+        // Reading the rules of a cross-origin style sheet that was not fetched
+        // with CORS throws a SecurityError.
+        rules = toRules(sheet.cssRules);
+      } catch (e) {
+        logs.push(
+          JSON.stringify({
+            level: "error",
+            type: "sheet",
+            message: `Failed to read CSS rules of style sheet at ${sheet.href}`,
+            originalError: `${e}`,
+          }),
+        );
+
         rules = [];
       }
 
@@ -275,7 +305,50 @@ export namespace Native {
       };
     }
 
-    function toRule(rule: globalThis.CSSRule): Rule.JSON {
+    /**
+     * Serialises the rules that can be, and skips the others.
+     *
+     * @privateRemarks
+     * A rule that cannot be serialised must not prevent serialising its
+     * siblings: a single `@container` or `@property` rule would otherwise make
+     * its whole style sheet (or `@media`, `@supports`, `@layer` block) appear
+     * empty, and the page be audited without these styles.
+     *
+     * {@link https://github.com/Siteimprove/alfa/issues/2188}
+     */
+    function toRules(rules: globalThis.CSSRuleList): Array<Rule.JSON> {
+      const result: Array<Rule.JSON> = [];
+
+      for (let i = 0; i < rules.length; i++) {
+        let json: Rule.JSON | null;
+
+        try {
+          json = toRule(rules[i]);
+        } catch (e) {
+          logs.push(
+            JSON.stringify({
+              level: "error",
+              type: "rule",
+              message: "Failed to serialise a CSS rule",
+              originalError: `${e}`,
+            }),
+          );
+
+          json = null;
+        }
+
+        if (json !== null) {
+          result.push(json);
+        }
+      }
+
+      return result;
+    }
+
+    /**
+     * Serialises a rule, or returns `null` if its type is not supported.
+     */
+    function toRule(rule: globalThis.CSSRule): Rule.JSON | null {
       // In the best case, rule.constructor.name works and everything is fine.
       switch (rule.constructor.name) {
         case "CSSFontFaceRule":
@@ -374,10 +447,16 @@ export namespace Native {
           return toSupportsRule(rule as globalThis.CSSSupportsRule);
       }
 
-      // If nothing worked, just crash.
-      throw new Error(
-        `Unsupported rule of type: ${rule.constructor.name} / ${Object.prototype.toString.apply(rule)} / ${rule.type}`,
-      );
+      // This is a rule of a type that Alfa does not support (e.g., @container,
+      // @property, @scope, @starting-style, @counter-style, …). It is skipped,
+      // together with the rules it may contain since we cannot tell when these
+      // apply, and its siblings are kept.
+      const ruleType =
+        rule.constructor.name ?? Object.prototype.toString.apply(rule);
+
+      skippedRules.set(ruleType, (skippedRules.get(ruleType) ?? 0) + 1);
+
+      return null;
     }
 
     function toFontFaceRule(
@@ -441,7 +520,7 @@ export namespace Native {
       let rules: Array<Rule.JSON>;
 
       try {
-        rules = map(rule.cssRules, toRule);
+        rules = toRules(rule.cssRules);
       } catch {
         rules = [];
       }
@@ -459,7 +538,7 @@ export namespace Native {
       return {
         type: "layer-block",
         layer: rule.name,
-        rules: map(rule.cssRules, toRule),
+        rules: toRules(rule.cssRules),
       };
     }
 
@@ -476,7 +555,7 @@ export namespace Native {
       let rules: Array<Rule.JSON>;
 
       try {
-        rules = map(rule.cssRules, toRule);
+        rules = toRules(rule.cssRules);
       } catch {
         rules = [];
       }
@@ -520,7 +599,7 @@ export namespace Native {
       let rules: Array<Rule.JSON>;
 
       try {
-        rules = map(rule.cssRules, toRule);
+        rules = toRules(rule.cssRules);
       } catch {
         rules = [];
       }
